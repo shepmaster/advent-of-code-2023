@@ -1,0 +1,9 @@
+[workspace]
+members = ["day-*"]
+resolver = "2"
+
+[workspace.lints.rust]
+rust_2018_idioms = "deny"
+
+[workspace.dependencies]
+snafu = { version = "0.7.5", features = ["rust_1_61", "backtraces-impl-std"] }
