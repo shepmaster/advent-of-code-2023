@@ -1,5 +1,5 @@
 use snafu::prelude::*;
-use std::str::FromStr;
+use std::{cmp, str::FromStr};
 
 const INPUT: &str = include_str!("../input");
 
@@ -9,8 +9,14 @@ fn main() -> Result<(), Error> {
     // Part 1: 2283
     println!("{sum}");
 
+    let sum = sum_of_power_of_minimum_cubes(INPUT)?;
+    // Part 2: 78669
+    println!("{sum}");
+
     Ok(())
 }
+
+type GameId = u64;
 
 const MAX: Draw = Draw {
     red: 12,
@@ -19,28 +25,50 @@ const MAX: Draw = Draw {
 };
 
 fn sum_of_possible_game_ids(s: &str) -> Result<u64, Error> {
-    let possible_game_ids = s.lines().map(|line| {
+    let validated_games = parse_games(s).map(|g| {
+        let (id, draws) = g?;
+        let valid =
+            itertools::process_results(draws, |mut draws| draws.all(|draw| MAX.can_fit(draw)))?;
+
+        Ok((id, valid))
+    });
+
+    itertools::process_results(validated_games, |games| {
+        games.filter_map(|(id, valid)| valid.then_some(id)).sum()
+    })
+}
+
+fn sum_of_power_of_minimum_cubes(s: &str) -> Result<u64, Error> {
+    let minimum_games = parse_games(s).map(|g| {
+        let (id, draws) = g?;
+        let minimum = itertools::process_results(draws, |draws| draws.reduce(Draw::minimum))?
+            .unwrap_or_default();
+
+        Ok((id, minimum))
+    });
+
+    itertools::process_results(minimum_games, |games| games.map(|(_, d)| d.power()).sum())
+}
+
+#[allow(clippy::needless_lifetimes)]
+fn parse_games<'a>(
+    s: &'a str,
+) -> impl Iterator<Item = Result<(GameId, impl Iterator<Item = Result<Draw, Error>> + 'a), Error>> + 'a
+{
+    s.lines().map(|line| {
         let mut parts = line.splitn(2, ':');
         let id = parts.next().context(MissingIdSnafu { line })?;
         let draws = parts.next().context(MissingDrawsSnafu { line })?;
 
         let id = id.trim_start_matches("Game ");
-        let id: u64 = id.parse().context(InvalidIdSnafu { line, id })?;
+        let id = id.parse().context(InvalidIdSnafu { line, id })?;
 
-        for draw in draws
+        let draws = draws
             .split(';')
-            .map(|draw| Draw::from_str(draw).context(InvalidDrawSnafu { line, draw }))
-        {
-            let draw = draw?;
-            if !MAX.can_fit(draw) {
-                return Ok(None);
-            }
-        }
+            .map(move |draw| Draw::from_str(draw).context(InvalidDrawSnafu { line, draw }));
 
-        Ok(Some(id))
-    });
-
-    itertools::process_results(possible_game_ids, |ids| ids.flatten().sum())
+        Ok((id, draws))
+    })
 }
 
 #[derive(Debug, Snafu)]
@@ -76,6 +104,18 @@ struct Draw {
 impl Draw {
     fn can_fit(&self, subset: Draw) -> bool {
         self.red >= subset.red && self.green >= subset.green && self.blue >= subset.blue
+    }
+
+    fn minimum(self, other: Self) -> Self {
+        Self {
+            red: cmp::max(self.red, other.red),
+            green: cmp::max(self.green, other.green),
+            blue: cmp::max(self.blue, other.blue),
+        }
+    }
+
+    fn power(self) -> u64 {
+        self.red * self.green * self.blue
     }
 }
 
@@ -138,6 +178,14 @@ mod test {
     #[snafu::report]
     fn example_1() -> Result<(), Error> {
         assert_eq!(8, sum_of_possible_game_ids(EXAMPLE_INPUT_1)?);
+
+        Ok(())
+    }
+
+    #[test]
+    #[snafu::report]
+    fn example_2() -> Result<(), Error> {
+        assert_eq!(2286, sum_of_power_of_minimum_cubes(EXAMPLE_INPUT_1)?);
 
         Ok(())
     }
