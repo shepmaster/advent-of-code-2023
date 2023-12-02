@@ -6,4 +6,5 @@ resolver = "2"
 rust_2018_idioms = "deny"
 
 [workspace.dependencies]
+itertools = "0.12.0"
 snafu = { version = "0.7.5", features = ["rust_1_61", "backtraces-impl-std"] }
