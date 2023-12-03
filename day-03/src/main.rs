@@ -13,6 +13,10 @@ fn main() -> Result<(), ParseComponentMapError> {
     // Part 1: 530849
     println!("{sum}");
 
+    let sum = sum_of_gear_ratios(INPUT)?;
+    // Part 2: 84900879
+    println!("{sum}");
+
     Ok(())
 }
 
@@ -25,6 +29,10 @@ enum Component {
 impl Component {
     fn is_symbol(&self) -> bool {
         matches!(self, Self::Symbol(..))
+    }
+
+    fn is_the_symbol(&self, s: char) -> bool {
+        matches!(self, Self::Symbol(ss) if *ss == s)
     }
 
     fn as_number(&self) -> Option<&u64> {
@@ -45,13 +53,38 @@ fn sum_of_part_numbers(s: &str) -> Result<u64, ParseComponentMapError> {
     let possible_numbers = symbol_positions
         .flat_map(|&sym_pos| fringe(sym_pos).flat_map(|pos| components.get(&pos)?.as_number()));
 
-    let mut possible_numbers = possible_numbers.collect::<Vec<_>>();
-
-    // Unique by reference equality
-    possible_numbers.sort_by_key(|n| &**n as *const u64);
-    possible_numbers.dedup_by_key(|n| &**n as *const u64);
+    let possible_numbers = unique_by_reference_equality(possible_numbers);
 
     Ok(possible_numbers.into_iter().sum())
+}
+
+fn sum_of_gear_ratios(s: &str) -> Result<u64, ParseComponentMapError> {
+    let components = parse_component_map(s)?;
+
+    let symbol_positions = components
+        .iter()
+        .flat_map(|(pos, c)| c.is_the_symbol('*').then_some(pos));
+
+    let possible_numbers = symbol_positions.flat_map(|&sym_pos| {
+        let neighbors = fringe(sym_pos).flat_map(|pos| components.get(&pos)?.as_number());
+        let neighbors = unique_by_reference_equality(neighbors);
+
+        match &*neighbors {
+            &[a, b] => Some(a * b),
+            _ => None,
+        }
+    });
+
+    Ok(possible_numbers.sum())
+}
+
+fn unique_by_reference_equality<'a>(i: impl IntoIterator<Item = &'a u64>) -> Vec<&'a u64> {
+    let mut values: Vec<_> = i.into_iter().collect();
+
+    values.sort_by_key(|n| &**n as *const u64);
+    values.dedup_by_key(|n| &**n as *const u64);
+
+    values
 }
 
 fn fringe((x, y): Coordinate) -> impl Iterator<Item = Coordinate> {
@@ -161,5 +194,13 @@ mod test {
         let expected = BTreeSet::from_iter([(1, 0), (1, 1), (0, 1)]);
 
         assert_eq!(found, expected);
+    }
+
+    #[test]
+    #[snafu::report]
+    fn example_2() -> Result<(), ParseComponentMapError> {
+        assert_eq!(467835, sum_of_gear_ratios(EXAMPLE_INPUT_1)?);
+
+        Ok(())
     }
 }
