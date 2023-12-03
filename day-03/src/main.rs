@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use snafu::prelude::*;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, rc::Rc};
 
 const INPUT: &str = include_str!("../input");
 
@@ -16,16 +16,10 @@ fn main() -> Result<(), ParseComponentMapError> {
     Ok(())
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 enum Component {
     Symbol(char),
-    Number(Number),
-}
-
-#[derive(Debug, Copy, Clone)]
-struct Number {
-    num: u64,
-    width: usize,
+    Number(Rc<u64>),
 }
 
 impl Component {
@@ -33,7 +27,7 @@ impl Component {
         matches!(self, Self::Symbol(..))
     }
 
-    fn into_number(self) -> Option<Number> {
+    fn as_number(&self) -> Option<&u64> {
         match self {
             Self::Number(n) => Some(n),
             _ => None,
@@ -44,44 +38,44 @@ impl Component {
 fn sum_of_part_numbers(s: &str) -> Result<u64, ParseComponentMapError> {
     let components = parse_component_map(s)?;
 
-    let numbers = components
+    let symbol_positions = components
         .iter()
-        .flat_map(|(pos, c)| c.into_number().map(|n| (*pos, n)));
+        .flat_map(|(pos, c)| c.is_symbol().then_some(pos));
 
-    Ok(numbers
-        .filter(|&(pos, n)| {
-            fringe(pos, n.width)
-                .any(|coord| components.get(&coord).map_or(false, |c| c.is_symbol()))
-        })
-        .map(|(_pos, n)| n.num)
-        .sum())
+    let possible_numbers = symbol_positions
+        .flat_map(|&sym_pos| fringe(sym_pos).flat_map(|pos| components.get(&pos)?.as_number()));
+
+    let mut possible_numbers = possible_numbers.collect::<Vec<_>>();
+
+    // Unique by reference equality
+    possible_numbers.sort_by_key(|n| &**n as *const u64);
+    possible_numbers.dedup_by_key(|n| &**n as *const u64);
+
+    Ok(possible_numbers.into_iter().sum())
 }
 
-fn fringe((x, y): Coordinate, width: usize) -> impl Iterator<Item = Coordinate> {
+fn fringe((x, y): Coordinate) -> impl Iterator<Item = Coordinate> {
     let x_start = x.checked_sub(1);
-    let x_end = x.checked_add(width);
+    let x_end = x.checked_add(1);
 
-    let left_edge = [
-        (x_start, y.checked_sub(1)),
+    let y_start = y.checked_sub(1);
+    let y_end = y.checked_add(1);
+
+    [
+        // left edge
+        (x_start, y_start),
         (x_start, Some(y)),
-        (x_start, y.checked_add(1)),
-    ];
-
-    let middle = (0..width)
-        .flat_map(move |d| x.checked_add(d))
-        .flat_map(move |x| [(Some(x), y.checked_sub(1)), (Some(x), y.checked_add(1))]);
-
-    let right_edge = [
-        (x_end, y.checked_sub(1)),
+        (x_start, y_end),
+        // middle
+        (Some(x), y_start),
+        (Some(x), y_end),
+        // right edge
+        (x_end, y_start),
         (x_end, Some(y)),
-        (x_end, y.checked_add(1)),
-    ];
-
-    left_edge
-        .into_iter()
-        .chain(middle)
-        .chain(right_edge)
-        .flat_map(|x| Some((x.0?, x.1?)))
+        (x_end, y_end),
+    ]
+    .into_iter()
+    .flat_map(|x| Some((x.0?, x.1?)))
 }
 
 fn parse_component_map(s: &str) -> Result<ComponentMap, ParseComponentMapError> {
@@ -104,7 +98,9 @@ fn parse_component_map(s: &str) -> Result<ComponentMap, ParseComponentMapError> 
                     let width = num.len();
                     let num = num.parse().context(InvalidNumberSnafu { num })?;
 
-                    components.insert((x, y), Component::Number(Number { num, width }));
+                    for (w, num) in itertools::repeat_n(Rc::new(num), width).enumerate() {
+                        components.insert((x + w, y), Component::Number(num));
+                    }
 
                     head = rest;
                     x += width;
@@ -161,7 +157,7 @@ mod test {
 
     #[test]
     fn fringe_handles_edges() {
-        let found = fringe((0, 0), 1).collect::<BTreeSet<_>>();
+        let found = fringe((0, 0)).collect::<BTreeSet<_>>();
         let expected = BTreeSet::from_iter([(1, 0), (1, 1), (0, 1)]);
 
         assert_eq!(found, expected);
