@@ -26,6 +26,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "day-04"
+version = "0.1.0"
+dependencies = [
+ "itertools",
+ "snafu",
+]
+
+[[package]]
 name = "doc-comment"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
