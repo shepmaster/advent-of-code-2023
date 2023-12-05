@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 itertools.workspace = true
+rayon.workspace = true
 snafu.workspace = true
 
 [lints]

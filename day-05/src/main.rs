@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use rayon::prelude::*;
 use snafu::prelude::*;
 use std::collections::BTreeMap;
 
@@ -33,7 +34,7 @@ fn lowest_seed_range_location(s: &str) -> Result<u64, Error> {
 
     input
         .seeds
-        .chunks_exact(2)
+        .par_chunks_exact(2)
         .flat_map(|range| range[0]..(range[0] + range[1]))
         .map(|seed| input.follow_through_maps(seed))
         .min()
