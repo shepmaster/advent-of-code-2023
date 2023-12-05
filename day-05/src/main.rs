@@ -10,6 +10,10 @@ fn main() -> Result<(), Error> {
     // Part 1: 251346198
     println!("{lowest}");
 
+    let lowest = lowest_seed_range_location(INPUT)?;
+    // Part 2: 72263011
+    println!("{lowest}");
+
     Ok(())
 }
 
@@ -20,6 +24,18 @@ fn lowest_seed_location(s: &str) -> Result<u64, Error> {
         .seeds
         .iter()
         .map(|&seed| input.follow_through_maps(seed))
+        .min()
+        .context(NoSeedsSnafu)
+}
+
+fn lowest_seed_range_location(s: &str) -> Result<u64, Error> {
+    let input = parse_input(s)?;
+
+    input
+        .seeds
+        .chunks_exact(2)
+        .flat_map(|range| range[0]..(range[0] + range[1]))
+        .map(|seed| input.follow_through_maps(seed))
         .min()
         .context(NoSeedsSnafu)
 }
@@ -281,6 +297,13 @@ mod test {
     #[snafu::report]
     fn example_1() -> Result<(), Error> {
         assert_eq!(35, lowest_seed_location(EXAMPLE_INPUT_1)?);
+        Ok(())
+    }
+
+    #[test]
+    #[snafu::report]
+    fn example_2() -> Result<(), Error> {
+        assert_eq!(46, lowest_seed_range_location(EXAMPLE_INPUT_1)?);
         Ok(())
     }
 }
