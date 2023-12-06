@@ -10,6 +10,10 @@ fn main() -> Result<(), Error> {
     // Part 1: 800280
     println!("{product}");
 
+    let number = number_of_possible_wins_fixed_kerning(INPUT)?;
+    // Part 1: 45128024
+    println!("{number}");
+
     Ok(())
 }
 
@@ -31,6 +35,25 @@ fn product_of_number_of_possible_wins(s: &str) -> Result<u64, Error> {
             Ok(number_of_possible_wins(time, distance))
         })
         .product()
+}
+
+fn number_of_possible_wins_fixed_kerning(s: &str) -> Result<u64, Error> {
+    let mut lines = s.lines();
+
+    let times = lines.next().context(TimesMissingSnafu)?;
+    let distances = lines.next().context(DistancesMissingSnafu)?;
+
+    let smush = |s: &str| {
+        s.chars()
+            .filter(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+    };
+
+    let time = smush(times).context(TimeInvalidSnafu)?;
+    let distance = smush(distances).context(DistanceInvalidSnafu)?;
+
+    Ok(number_of_possible_wins(time, distance))
 }
 
 // `t` is total time
@@ -91,6 +114,10 @@ enum Error {
     TimesInvalid { source: ParseSequenceError },
 
     DistancesInvalid { source: ParseSequenceError },
+
+    TimeInvalid { source: std::num::ParseFloatError },
+
+    DistanceInvalid { source: std::num::ParseFloatError },
 }
 
 fn parse_sequence(s: &str) -> impl Iterator<Item = Result<f64, ParseSequenceError>> + '_ {
@@ -127,6 +154,17 @@ mod test {
     #[snafu::report]
     fn example_1() -> Result<(), Error> {
         assert_eq!(288, product_of_number_of_possible_wins(EXAMPLE_INPUT_1)?);
+
+        Ok(())
+    }
+
+    #[test]
+    #[snafu::report]
+    fn example_2() -> Result<(), Error> {
+        assert_eq!(
+            71503,
+            number_of_possible_wins_fixed_kerning(EXAMPLE_INPUT_1)?
+        );
 
         Ok(())
     }
