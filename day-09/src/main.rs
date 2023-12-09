@@ -9,6 +9,10 @@ fn main() -> Result<(), Error> {
     // Part 1: 2008960228
     println!("{sum}");
 
+    let sum = sum_of_backwards_extrapolated_histories(INPUT)?;
+    // Part 2: 1097
+    println!("{sum}");
+
     Ok(())
 }
 
@@ -16,7 +20,36 @@ fn sum_of_extrapolated_histories(s: &str) -> Result<i64, Error> {
     s.lines().map(extrapolated_history).sum()
 }
 
+fn sum_of_backwards_extrapolated_histories(s: &str) -> Result<i64, Error> {
+    s.lines().map(backwards_extrapolated_history).sum()
+}
+
 fn extrapolated_history(line: &str) -> Result<i64, Error> {
+    let all_numbers = build_differences(line)?;
+
+    #[allow(clippy::unnecessary_fold)] // parallel code with backwards impl
+    let next_value = all_numbers
+        .iter()
+        .rev()
+        .flat_map(|ns| ns.last())
+        .fold(0, |acc, v| v + acc);
+
+    Ok(next_value)
+}
+
+fn backwards_extrapolated_history(line: &str) -> Result<i64, Error> {
+    let all_numbers = build_differences(line)?;
+
+    let prev_value = all_numbers
+        .iter()
+        .rev()
+        .flat_map(|ns| ns.first())
+        .fold(0, |acc, v| v - acc);
+
+    Ok(prev_value)
+}
+
+fn build_differences(line: &str) -> Result<Vec<Vec<i64>>, Error> {
     let numbers = line
         .split_ascii_whitespace()
         .map(|number| number.parse().context(InvalidNumberSnafu { number }))
@@ -37,7 +70,7 @@ fn extrapolated_history(line: &str) -> Result<i64, Error> {
         last = next;
     }
 
-    Ok(all_numbers.into_iter().flat_map(|mut ns| ns.pop()).sum())
+    Ok(all_numbers)
 }
 
 #[derive(Debug, Snafu)]
@@ -59,6 +92,14 @@ mod test {
     #[snafu::report]
     fn example_1() -> Result<(), Error> {
         assert_eq!(114, sum_of_extrapolated_histories(EXAMPLE_INPUT_1)?);
+
+        Ok(())
+    }
+
+    #[test]
+    #[snafu::report]
+    fn example_2() -> Result<(), Error> {
+        assert_eq!(2, sum_of_backwards_extrapolated_histories(EXAMPLE_INPUT_1)?);
 
         Ok(())
     }
