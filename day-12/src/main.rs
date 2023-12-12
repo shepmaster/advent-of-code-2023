@@ -1,5 +1,7 @@
 use core::fmt;
+use itertools::Itertools;
 use snafu::prelude::*;
+use std::collections::BTreeMap;
 
 const INPUT: &str = include_str!("../input");
 
@@ -9,16 +11,30 @@ fn main() -> Result<(), Error> {
     // Part 1: 7916
     println!("{arrangements}");
 
+    let arrangements = sum_of_unfolded_possible_arrangements(INPUT)?;
+    // Part 2: 37366887898686
+    println!("{arrangements}");
+
     Ok(())
 }
 
 fn sum_of_possible_arrangements(s: &str) -> Result<usize, Error> {
-    s.lines()
+    lines(s).map(|line| Ok(line?.possible_arrangements())).sum()
+}
+
+fn sum_of_unfolded_possible_arrangements(s: &str) -> Result<usize, Error> {
+    lines(s)
         .map(|line| {
-            let line = Line::try_from(line).context(LineSnafu { line })?;
+            let mut line = line?;
+            line.unfold();
             Ok(line.possible_arrangements())
         })
         .sum()
+}
+
+fn lines(s: &str) -> impl Iterator<Item = Result<Line, Error>> + '_ {
+    s.lines()
+        .map(|line| Line::try_from(line).context(LineSnafu { line }))
 }
 
 #[derive(Debug, Snafu)]
@@ -59,9 +75,22 @@ impl TryFrom<&str> for Line {
     }
 }
 
-type Queue<'a> = Vec<(&'a [Condition], &'a [usize])>;
-
 impl Line {
+    fn unfold(&mut self) {
+        use std::mem;
+
+        const UNFOLD_COUNT: usize = 5;
+
+        let conditions = mem::take(&mut self.conditions);
+        let a = itertools::repeat_n(conditions, UNFOLD_COUNT);
+        let a = Itertools::intersperse(a, vec![Condition::Unknown]);
+        self.conditions = a.flatten().collect();
+
+        let group_sizes = mem::take(&mut self.group_sizes);
+        let a = itertools::repeat_n(group_sizes, UNFOLD_COUNT);
+        self.group_sizes = a.flatten().collect();
+    }
+
     /// The general idea is to look at the head of `conditions`. If
     /// it's damaged or unknown, try to fit (head of `group_sizes`)
     /// damaged pieces. We then need to leave one operational piece
@@ -75,53 +104,56 @@ impl Line {
     fn possible_arrangements(&self) -> usize {
         use Condition::*;
 
-        let conditions = &self.conditions[..];
-        let group_sizes = &self.group_sizes[..];
+        type Cache<'a> = BTreeMap<(&'a [Condition], &'a [usize]), usize>;
 
-        let mut success = 0;
-        let mut queue: Queue<'_> = vec![(conditions, group_sizes)];
-
-        while let Some((conditions, group_sizes)) = queue.pop() {
+        fn core<'a>(
+            cache: &mut Cache<'a>,
+            conditions: &'a [Condition],
+            group_sizes: &'a [usize],
+        ) -> usize {
             let Some((condition, next_conditions)) = conditions.split_first() else {
                 // No more conditions; only a success when the groups are empty
                 if group_sizes.is_empty() {
-                    success += 1;
+                    return 1;
+                } else {
+                    return 0;
                 }
-                continue;
             };
 
             let Some((&group_size, next_group_sizes)) = group_sizes.split_first() else {
                 // No more groups; only a success when the remaining conditions are operational
                 if conditions.iter().all(|c| c.acts_as_operational()) {
-                    success += 1;
+                    return 1;
+                } else {
+                    return 0;
                 }
-
-                continue;
             };
 
+            if let Some(&successes) = cache.get(&(conditions, group_sizes)) {
+                return successes;
+            }
+
             fn treat_as_operational<'a>(
-                queue: &mut Queue<'a>,
                 next_conditions: &'a [Condition],
                 group_sizes: &'a [usize],
-            ) {
-                queue.push((next_conditions, group_sizes));
+            ) -> (&'a [Condition], &'a [usize]) {
+                (next_conditions, group_sizes)
             }
 
             fn treat_as_damaged<'a>(
-                queue: &mut Queue<'a>,
                 conditions: &'a [Condition],
                 group_size: usize,
                 next_group_sizes: &'a [usize],
-            ) {
+            ) -> Option<(&'a [Condition], &'a [usize])> {
                 if conditions.len() < group_size {
-                    return;
+                    return None;
                 };
 
                 let (head, body) = conditions.split_at(group_size);
 
                 // We need to start with N damaged conditions
                 if !head.iter().all(|c| c.acts_as_damaged()) {
-                    return;
+                    return None;
                 }
 
                 // If we have a next element, check to see if it
@@ -134,29 +166,45 @@ impl Line {
                     .unwrap_or((true, &[]));
 
                 if !followed_by_operational {
-                    return;
+                    return None;
                 }
 
-                queue.push((tail, next_group_sizes));
+                Some((tail, next_group_sizes))
             }
 
-            match condition {
+            // NEXT: grab the value, recursively call back into ourselves, cache the result
+            // also check the cache at the beginning of function.
+            let n_successes = match condition {
                 Operational => {
-                    treat_as_operational(&mut queue, next_conditions, group_sizes);
+                    let (cs, gs) = treat_as_operational(next_conditions, group_sizes);
+                    core(cache, cs, gs)
                 }
 
-                Damaged => {
-                    treat_as_damaged(&mut queue, conditions, group_size, next_group_sizes);
-                }
+                Damaged => match treat_as_damaged(conditions, group_size, next_group_sizes) {
+                    Some((cs, gs)) => core(cache, cs, gs),
+                    None => 0,
+                },
 
                 Unknown => {
-                    treat_as_operational(&mut queue, next_conditions, group_sizes);
-                    treat_as_damaged(&mut queue, conditions, group_size, next_group_sizes);
+                    let (cs, gs) = treat_as_operational(next_conditions, group_sizes);
+                    let operational_successes = core(cache, cs, gs);
+
+                    let damaged_successes =
+                        match treat_as_damaged(conditions, group_size, next_group_sizes) {
+                            Some((cs, gs)) => core(cache, cs, gs),
+                            None => 0,
+                        };
+
+                    operational_successes + damaged_successes
                 }
-            }
+            };
+
+            cache.insert((conditions, group_sizes), n_successes);
+            n_successes
         }
 
-        success
+        let mut cache = BTreeMap::new();
+        core(&mut cache, &self.conditions, &self.group_sizes)
     }
 }
 
@@ -188,7 +236,7 @@ impl fmt::Display for ConditionView<'_> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Condition {
     Operational,
     Damaged,
@@ -250,6 +298,17 @@ mod test {
     #[snafu::report]
     fn example_1() -> Result<(), Error> {
         assert_eq!(21, sum_of_possible_arrangements(EXAMPLE_INPUT_1)?);
+
+        Ok(())
+    }
+
+    #[test]
+    #[snafu::report]
+    fn example_2() -> Result<(), Error> {
+        assert_eq!(
+            525152,
+            sum_of_unfolded_possible_arrangements(EXAMPLE_INPUT_1)?
+        );
 
         Ok(())
     }

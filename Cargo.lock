@@ -151,6 +151,7 @@ dependencies = [
 name = "day-12"
 version = "0.1.0"
 dependencies = [
+ "itertools",
  "snafu",
 ]
 
