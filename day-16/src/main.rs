@@ -8,60 +8,51 @@ use std::{
 const INPUT: &str = include_str!("../input");
 
 #[snafu::report]
-fn main() -> Result<(), ParseMapError> {
+fn main() -> Result<(), Error> {
     let tiles = energized_tiles(INPUT)?;
     // Part 1: 7562
+    println!("{tiles}");
+
+    let tiles = maximum_energized_tiles(INPUT)?;
+    // Part 2: 7793
     println!("{tiles}");
 
     Ok(())
 }
 
-fn energized_tiles(s: &str) -> Result<usize, ParseMapError> {
+fn energized_tiles(s: &str) -> Result<usize, Error> {
     let map: Map = s.parse()?;
+    let tiles = map.energized_tiles_from_start((0, 0), Direction::Right);
+    Ok(tiles)
+}
 
+fn maximum_energized_tiles(s: &str) -> Result<usize, Error> {
     use direction_shorthands::*;
-    use square_shorthands::*;
 
-    let mut queue = vec![((0, 0), R)];
-    let mut visited = BTreeMap::new();
+    let map = s.parse()?;
+    let Map { x_max, y_max, .. } = map;
 
-    while let Some((coord, direction)) = queue.pop() {
-        let visited = visited.entry(coord).or_insert_with(BTreeSet::new);
-        if !visited.insert(direction) {
-            // Already visited this, no need to re-visit
-            continue;
-        }
+    let edge_t = (0..=x_max).map(|x| ((x, 0), D));
+    let edge_r = (0..=y_max).map(|y| ((x_max, y), L));
+    let edge_b = (0..=x_max).map(|x| ((x, y_max), U));
+    let edge_l = (0..=y_max).map(|y| ((0, y), R));
 
-        match (map.squares.get(&coord), direction) {
-            (Some(Vs), R | L) => {
-                for d in [U, D] {
-                    queue.extend(map.cast(coord, d));
-                }
-            }
+    let starts = edge_t.chain(edge_r).chain(edge_b).chain(edge_l);
 
-            (Some(Hs), U | D) => {
-                for d in [L, R] {
-                    queue.extend(map.cast(coord, d));
-                }
-            }
+    starts
+        .map(|(c, d)| map.energized_tiles_from_start(c, d))
+        .max()
+        .context(EmptySnafu)
+}
 
-            (Some(Dr), U) => queue.extend(map.cast(coord, L)),
-            (Some(Dr), R) => queue.extend(map.cast(coord, D)),
-            (Some(Dr), D) => queue.extend(map.cast(coord, R)),
-            (Some(Dr), L) => queue.extend(map.cast(coord, U)),
+#[derive(Debug, Snafu)]
+enum Error {
+    #[snafu(context(false))]
+    Parse {
+        source: ParseMapError,
+    },
 
-            (Some(Dl), U) => queue.extend(map.cast(coord, R)),
-            (Some(Dl), R) => queue.extend(map.cast(coord, U)),
-            (Some(Dl), D) => queue.extend(map.cast(coord, L)),
-            (Some(Dl), L) => queue.extend(map.cast(coord, D)),
-
-            (Some(Vs), U | D) | (Some(Hs), L | R) | (None, _) => {
-                queue.extend(map.cast(coord, direction));
-            }
-        }
-    }
-
-    Ok(visited.len())
+    Empty,
 }
 
 type Coord = (usize, usize);
@@ -73,6 +64,52 @@ struct Map {
 }
 
 impl Map {
+    fn energized_tiles_from_start(&self, start: Coord, direction: Direction) -> usize {
+        use direction_shorthands::*;
+        use square_shorthands::*;
+
+        let mut queue = vec![(start, direction)];
+        let mut visited = BTreeMap::new();
+
+        while let Some((coord, direction)) = queue.pop() {
+            let visited = visited.entry(coord).or_insert_with(BTreeSet::new);
+            if !visited.insert(direction) {
+                // Already visited this, no need to re-visit
+                continue;
+            }
+
+            match (self.squares.get(&coord), direction) {
+                (Some(Vs), R | L) => {
+                    for d in [U, D] {
+                        queue.extend(self.cast(coord, d));
+                    }
+                }
+
+                (Some(Hs), U | D) => {
+                    for d in [L, R] {
+                        queue.extend(self.cast(coord, d));
+                    }
+                }
+
+                (Some(Dr), U) => queue.extend(self.cast(coord, L)),
+                (Some(Dr), R) => queue.extend(self.cast(coord, D)),
+                (Some(Dr), D) => queue.extend(self.cast(coord, R)),
+                (Some(Dr), L) => queue.extend(self.cast(coord, U)),
+
+                (Some(Dl), U) => queue.extend(self.cast(coord, R)),
+                (Some(Dl), R) => queue.extend(self.cast(coord, U)),
+                (Some(Dl), D) => queue.extend(self.cast(coord, L)),
+                (Some(Dl), L) => queue.extend(self.cast(coord, D)),
+
+                (Some(Vs), U | D) | (Some(Hs), L | R) | (None, _) => {
+                    queue.extend(self.cast(coord, direction));
+                }
+            }
+        }
+
+        visited.len()
+    }
+
     fn cast(&self, start: Coord, dir: Direction) -> Option<(Coord, Direction)> {
         self.go(start, dir).map(|c| (c, dir))
     }
@@ -188,8 +225,16 @@ mod test {
 
     #[test]
     #[snafu::report]
-    fn example_1() -> Result<(), ParseMapError> {
+    fn example_1() -> Result<(), Error> {
         assert_eq!(46, energized_tiles(EXAMPLE_INPUT_1)?);
+
+        Ok(())
+    }
+
+    #[test]
+    #[snafu::report]
+    fn example_2() -> Result<(), Error> {
+        assert_eq!(51, maximum_energized_tiles(EXAMPLE_INPUT_1)?);
 
         Ok(())
     }
