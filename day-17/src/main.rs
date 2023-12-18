@@ -12,10 +12,24 @@ fn main() -> Result<(), Error> {
     // Part 1: 758
     println!("{heat_loss}");
 
+    let heat_loss = minimal_heat_loss_ultra(INPUT)?;
+    // Part 2: 892
+    println!("{heat_loss}");
+
     Ok(())
 }
 
 fn minimal_heat_loss(s: &str) -> Result<u32, Error> {
+    minimal_heat_loss_parameterized::<0, 3>(s)
+}
+
+fn minimal_heat_loss_ultra(s: &str) -> Result<u32, Error> {
+    minimal_heat_loss_parameterized::<4, 10>(s)
+}
+
+fn minimal_heat_loss_parameterized<const MIN: usize, const MAX: usize>(
+    s: &str,
+) -> Result<u32, Error> {
     use direction_shorthand::*;
 
     let grid = s.parse::<Grid>()?;
@@ -75,7 +89,10 @@ fn minimal_heat_loss(s: &str) -> Result<u32, Error> {
         cost,
     }) = queue.pop()
     {
-        if coord == end {
+        let min_ok = steps >= MIN;
+        let max_ok = steps < MAX;
+
+        if coord == end && min_ok {
             return Ok(cost);
         }
 
@@ -95,31 +112,33 @@ fn minimal_heat_loss(s: &str) -> Result<u32, Error> {
             }
         }
 
-        let left = dir.left_turn();
-        if let Some(coord) = grid.step(coord, left) {
-            let cost = cost + grid.map[&coord];
+        if min_ok {
+            let left = dir.left_turn();
+            if let Some(coord) = grid.step(coord, left) {
+                let cost = cost + grid.map[&coord];
 
-            queue.push(Step {
-                coord,
-                dir: left,
-                steps: 1,
-                cost,
-            });
+                queue.push(Step {
+                    coord,
+                    dir: left,
+                    steps: 1,
+                    cost,
+                });
+            }
+
+            let right = dir.right_turn();
+            if let Some(coord) = grid.step(coord, right) {
+                let cost = cost + grid.map[&coord];
+
+                queue.push(Step {
+                    coord,
+                    dir: right,
+                    steps: 1,
+                    cost,
+                });
+            }
         }
 
-        let right = dir.right_turn();
-        if let Some(coord) = grid.step(coord, right) {
-            let cost = cost + grid.map[&coord];
-
-            queue.push(Step {
-                coord,
-                dir: right,
-                steps: 1,
-                cost,
-            });
-        }
-
-        if steps < 3 {
+        if max_ok {
             if let Some(coord) = grid.step(coord, dir) {
                 let cost = cost + grid.map[&coord];
 
@@ -246,11 +265,28 @@ mod test {
     use super::*;
 
     const EXAMPLE_INPUT_1: &str = include_str!("../example-input-1");
+    const EXAMPLE_INPUT_2: &str = include_str!("../example-input-2");
 
     #[test]
     #[snafu::report]
     fn example_1() -> Result<(), Error> {
         assert_eq!(102, minimal_heat_loss(EXAMPLE_INPUT_1)?);
+
+        Ok(())
+    }
+
+    #[test]
+    #[snafu::report]
+    fn example_2() -> Result<(), Error> {
+        assert_eq!(94, minimal_heat_loss_ultra(EXAMPLE_INPUT_1)?);
+
+        Ok(())
+    }
+
+    #[test]
+    #[snafu::report]
+    fn example_3() -> Result<(), Error> {
+        assert_eq!(71, minimal_heat_loss_ultra(EXAMPLE_INPUT_2)?);
 
         Ok(())
     }
