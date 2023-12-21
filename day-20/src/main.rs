@@ -1,6 +1,11 @@
+use petgraph::{
+    algo::dominators,
+    graphmap::DiGraphMap,
+    visit::{self, Control},
+};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    iter,
+    iter, ops,
 };
 
 const INPUT: &str = include_str!("../input");
@@ -9,16 +14,29 @@ fn main() {
     let product = high_low_product(INPUT);
     // Part 1: 808146535
     println!("{product}");
+
+    let presses = presses_until_rx_low(INPUT);
+    // Part 2: 224370869958144 (too low)
+    // -> multiplication of button presses, not cycle times
+    //         224602953547789
+    println!("{presses}")
 }
 
 fn high_low_product(s: &str) -> usize {
     let mut modules = Modules::new(s);
 
-    let presses = (0..1000).map(|_| modules.push_button()).sum::<Presses>();
+    let pulses = (0..1000).map(|_| modules.push_button()).sum::<Pulses>();
 
-    presses.product()
+    pulses.product()
 }
 
+fn presses_until_rx_low(s: &str) -> usize {
+    let modules = Modules::new(s);
+
+    modules.graph()
+}
+
+#[derive(Debug, Clone)]
 struct Modules<'a>(BTreeMap<&'a str, Module<'a>>);
 
 impl<'a> Modules<'a> {
@@ -53,7 +71,7 @@ impl<'a> Modules<'a> {
             })
             .collect::<BTreeMap<_, _>>();
 
-        // ----------
+        // Ensure all referenced outputs exist
 
         let all_outputs = modules
             .values()
@@ -66,15 +84,12 @@ impl<'a> Modules<'a> {
                 outputs: vec![],
             });
         }
-        // ----------
+
+        // Backfill all conjunction incoming names
 
         let conjunctions = modules
             .values()
-            .flat_map(|module| match module {
-                FlipFlop { .. } => None,
-                Conjunction { name, .. } => Some(*name),
-                Plain { .. } => None,
-            })
+            .flat_map(|module| module.conjunction_name())
             .collect::<BTreeSet<_>>();
 
         let mut incoming = BTreeMap::new();
@@ -106,19 +121,129 @@ impl<'a> Modules<'a> {
         Modules(modules)
     }
 
-    fn push_button(&mut self) -> Presses {
+    /// Idea: Find all subgraphs between the broadcaster and rx
+    /// that have exactly one outgoing edge. These subgraphs can be
+    /// cycle-reduced.
+    ///
+    /// Somehow, it turns out if we multiply all the cycle lengths
+    /// together, that's the answer?
+    fn graph(&self) -> usize {
+        use petgraph::Direction::*;
+
+        let mut g = DiGraphMap::new();
+
+        for module in self.0.values() {
+            let from = g.add_node(module.name());
+            for to in module.outputs() {
+                let to = g.add_node(to);
+
+                g.add_edge(from, to, "");
+            }
+        }
+
+        // let dot = petgraph::dot::Dot::new(&g).to_string();
+        // std::fs::write("graph.dot", dot).unwrap();
+
+        // Find all the subgraphs
+
+        let b = g.add_node("broadcaster");
+        let to = "rx";
+
+        let mut subsets = vec![];
+
+        for (_, from, _) in g.edges_directed(b, Outgoing) {
+            let d = dominators::simple_fast(&g, from);
+            if let Some(d) = d.dominators(to) {
+                let to = d
+                    .filter(|n| g.edges_directed(n, Incoming).count() == 1)
+                    .nth(1); // skip rx itself
+
+                if let Some(to) = to {
+                    subsets.push((from, to));
+                }
+            }
+        }
+
+        // Find the cycle length of each subgraph
+
+        subsets
+            .into_iter()
+            .map(|(from, to)| {
+                // Find all nodes in this subgraph
+
+                let mut subset_names = BTreeSet::new();
+
+                visit::depth_first_search(&g, [from], |evt| match evt {
+                    visit::DfsEvent::Discover(n, _) => {
+                        subset_names.insert(n);
+
+                        if n == to {
+                            Control::<()>::Prune
+                        } else {
+                            Control::Continue
+                        }
+                    }
+                    _ => Control::Continue,
+                });
+
+                let mut this = self.clone();
+
+                // Keep only the steps relevant to this subgraph
+
+                this.0.retain(|name, _| subset_names.contains(name));
+
+                // Add back one the output node
+
+                this.0.insert(
+                    to,
+                    Module::Plain {
+                        name: to,
+                        outputs: vec![],
+                    },
+                );
+
+                this.detect_cycle("broadcaster", from, Pulse::Low)
+            })
+            .product()
+    }
+
+    fn state(&self) -> Vec<ModuleState> {
+        self.0.values().map(|module| module.state()).collect()
+    }
+
+    fn detect_cycle(&mut self, from: &'a str, to: &'a str, pulse: Pulse) -> usize {
+        let original_state = self.state();
+
+        let mut length = 0;
+
+        loop {
+            self.push_button_core(from, to, pulse);
+
+            length += 1;
+
+            if original_state == self.state() {
+                break length;
+            }
+        }
+    }
+
+    fn push_button(&mut self) -> Pulses {
+        self.push_button_core("button", "broadcaster", Pulse::Low)
+    }
+
+    fn push_button_core(&mut self, from: &'a str, to: &'a str, pulse: Pulse) -> Pulses {
         use Module::*;
         use Pulse::*;
 
-        let mut queue = VecDeque::from_iter([("button", "broadcaster", Low)]);
-        let mut presses = Presses::default();
+        let mut queue = VecDeque::from_iter([(from, to, pulse)]);
+        let mut pulses = Pulses::default();
 
         while let Some((from, to, pulse)) = queue.pop_front() {
-            // eprintln!("{from} --{pulse:?}--> {to}");
+            //            eprintln!("{from} --{pulse:?}--> {to}");
 
             match pulse {
-                Low => presses.low += 1,
-                High => presses.high += 1,
+                Low => pulses.low += 1,
+                High => pulses.high += 1,
             }
 
             let module = self
@@ -159,11 +284,20 @@ impl<'a> Modules<'a> {
             }
         }
 
-        presses
+        pulses
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
+enum ModuleState {
+    FlipFlop { is_on: bool },
+
+    Conjunction { inputs: Vec<Pulse> },
+
+    Null,
+}
+
+#[derive(Debug, Clone)]
 enum Module<'a> {
     FlipFlop {
         is_on: bool,
@@ -190,6 +324,16 @@ impl<'a> Module<'a> {
         }
     }
 
+    fn conjunction_name(&self) -> Option<&'a str> {
+        use Module::*;
+
+        match self {
+            FlipFlop { .. } => None,
+            Conjunction { name, .. } => Some(*name),
+            Plain { .. } => None,
+        }
+    }
+
     fn outputs(&self) -> &[&'a str] {
         use Module::*;
 
@@ -197,6 +341,20 @@ impl<'a> Module<'a> {
             FlipFlop { outputs, .. } | Conjunction { outputs, .. } | Plain { outputs, .. } => {
                 outputs
             }
+        }
+    }
+
+    fn state(&self) -> ModuleState {
+        use Module as M;
+        use ModuleState as S;
+
+        match *self {
+            M::FlipFlop { is_on, .. } => S::FlipFlop { is_on },
+            M::Conjunction { ref inputs, .. } => {
+                let inputs = inputs.values().copied().collect();
+                S::Conjunction { inputs }
+            }
+            M::Plain { .. } => S::Null,
         }
     }
 }
@@ -208,24 +366,37 @@ enum Pulse {
 }
 
 #[derive(Debug, Copy, Clone, Default)]
-struct Presses {
+struct Pulses {
     low: usize,
     high: usize,
 }
 
-impl Presses {
+impl Pulses {
     fn product(&self) -> usize {
         let Self { low, high } = self;
         low * high
     }
 }
 
-impl iter::Sum for Presses {
+impl ops::MulAssign<usize> for Pulses {
+    fn mul_assign(&mut self, rhs: usize) {
+        self.low *= rhs;
+        self.high *= rhs;
+    }
+}
+
+impl ops::AddAssign for Pulses {
+    fn add_assign(&mut self, rhs: Self) {
+        self.low += rhs.low;
+        self.high += rhs.high;
+    }
+}
+
+impl iter::Sum for Pulses {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         let mut this = Self::default();
         for p in iter {
-            this.low += p.low;
-            this.high += p.high;
+            this += p;
         }
         this
     }

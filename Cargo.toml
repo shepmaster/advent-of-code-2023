@@ -11,3 +11,4 @@ assert_matches = "1.5.0"
 itertools = "0.12.0"
 rayon = "1.8.0"
 snafu = { version = "0.7.5", features = ["rust_1_61", "backtraces-impl-std"] }
+petgraph = "0.6.4"
