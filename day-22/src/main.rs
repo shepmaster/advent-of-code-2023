@@ -1,7 +1,7 @@
 use core::fmt;
 use std::{
     cmp,
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
 };
 
 use itertools::Itertools;
@@ -19,13 +19,123 @@ fn main() {
     // -> while being the only child of another parent.
     //       : 492
     println!("{bricks}");
+
+    let sum = sum_of_falling_bricks(INPUT);
+    // Part 2: 86556
+    println!("{sum}");
 }
 
+/// Idea: The topmost parent can be removed; nothing relies on
+/// them. Any node with multiple children can have one child
+/// removed; the other child would continue supporting.
+///
+/// It's not just > 1 child... if one of those children is the sole
+/// supporter of another, it cannot be removed. For example, C cannot
+/// be removed because then Z would fall.
+///
+///  A      Z
+///  |      |
+///  |--    |
+///  | |    |
+///  B |- C-|
 fn safely_disintegratable_bricks(s: &str) -> usize {
+    let input = parse_block_list(s);
+    // eprintln!("=== Initial {}\n\n{}", input.len(), TowerViewX(&input));
+
+    // Checking assumptions
+    // for Brick { s, e } in &input {
+    //     assert!(s.0 <= e.0);
+    //     assert!(s.1 <= e.1);
+    //     assert!(s.2 <= e.2);
+    // }
+
+    let stacked = stack_blocks_tightly(input);
+    // eprintln!("=== Stacked\n\n{}", TowerViewX(&stacked));
+
+    let g = build_dependency_graph(stacked);
+
+    // Bricks at the top of the pile can always be removed
+    let mut no_parent_bricks = BTreeSet::new();
+
+    let mut has_siblings = BTreeSet::new();
+    let mut has_no_siblings = BTreeSet::new();
+
+    for id in g.nodes() {
+        use Direction::*;
+
+        let n_parents = g.edges_directed(id, Incoming).take(1).count();
+
+        if n_parents == 0 {
+            no_parent_bricks.insert(id);
+        }
+
+        let children = g
+            .edges_directed(id, Outgoing)
+            .map(|(_, c, _)| c)
+            .collect::<Vec<_>>();
+
+        match &children[..] {
+            &[] => {}
+            &[c] => {
+                has_no_siblings.insert(c);
+            }
+            c => has_siblings.extend(c),
+        }
+    }
+
+    let n_always_siblings = has_siblings.difference(&has_no_siblings).count();
+
+    no_parent_bricks.len() + n_always_siblings
+}
+
+/// Idea: For each parent, if it doesn't have any other children, it
+/// falls. Repeat.
+///
+/// Need to handle one block supporting two that support two more:
+///
+/// 1 2
+/// |✕|
+/// 3 4
+///  V
+///  5
+///
+/// Removing 5 will cause both 3 and 4 to fall, which means that 1 and
+/// 2 will also fall
+fn sum_of_falling_bricks(s: &str) -> usize {
+    let input = parse_block_list(s);
+    let stacked = stack_blocks_tightly(input);
+    let g = build_dependency_graph(stacked);
+
+    g.nodes()
+        .map(|id| {
+            use Direction::*;
+
+            let mut queue = VecDeque::from_iter([id]);
+            let mut fallen = BTreeSet::from_iter([id]);
+
+            while let Some(id) = queue.pop_front() {
+                for (parent_id, _, _) in g.edges_directed(id, Incoming) {
+                    let all_children_gone = g
+                        .edges_directed(parent_id, Outgoing)
+                        .all(|(_, sibling, _)| fallen.contains(&sibling));
+
+                    // This parent will fall;
+                    if all_children_gone {
+                        fallen.insert(parent_id);
+                        queue.push_back(parent_id)
+                    }
+                }
+            }
+
+            fallen.len() - 1 // We don't care about the original block
+        })
+        .sum()
+}
+
+fn parse_block_list(s: &str) -> Vec<Brick> {
     let mut id = 0;
 
-    let mut input = s
-        .lines()
+    s.lines()
         .map(|line| {
             let (s, e) = line.split_once('~').expect("Malformed");
 
@@ -51,22 +161,10 @@ fn safely_disintegratable_bricks(s: &str) -> usize {
             id += 1;
             b
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
 
-    // eprintln!("[");
-    // for i in &input {
-    //     eprintln!("  {i:?},");
-    // }
-    // eprintln!("]");
-    // eprintln!("=== Initial {}\n\n{}", input.len(), TowerViewX(&input));
-
-    // Checking assumptions
-    // for Brick { s, e } in &input {
-    //     assert!(s.0 <= e.0);
-    //     assert!(s.1 <= e.1);
-    //     assert!(s.2 <= e.2);
-    // }
-
+fn stack_blocks_tightly(mut input: Vec<Brick>) -> Vec<Brick> {
     // Process the bricks from the bottom-up
     input.sort_by_key(|b| cmp::min(b.s.2, b.e.2));
 
@@ -94,13 +192,11 @@ fn safely_disintegratable_bricks(s: &str) -> usize {
         stacked.push(fallen);
     }
 
-    // eprintln!("=== Stacked\n\n{}", TowerViewX(&stacked));
+    stacked
+}
 
-    // Build a tree of every brick. Child nodes support the
-    // parents. The topmost parent can be removed; nothing relies on
-    // them. Any node with two children can have the children removed;
-    // the other child would continue supporting.
-
+/// Build a tree of every brick. Child nodes support the parents.
+fn build_dependency_graph(stacked: Vec<Brick>) -> DiGraphMap<Id, &'static str> {
     let v = Volume::new(&stacked);
 
     let mut g = DiGraphMap::new();
@@ -122,46 +218,7 @@ fn safely_disintegratable_bricks(s: &str) -> usize {
     // let dot = format!("{}", petgraph::dot::Dot::new(&g));
     // std::fs::write("./graph.dot", dot).unwrap();
 
-    // Bricks at the top of the pile can always be removed
-    let mut no_parent_bricks = BTreeSet::new();
-
-    // Not just > 1 children... if one of those children is the sole
-    // supporter of another, it cannot be removed. For example, C
-    // cannot be removed because then Z would fall.
-    //
-    //  A      Z
-    //  |      |
-    //  |--    |
-    //  | |    |
-    //  B |- C-|
-    let mut has_siblings = BTreeSet::new();
-    let mut has_no_siblings = BTreeSet::new();
-
-    for id in g.nodes() {
-        use Direction::*;
-
-        let n_parents = g.edges_directed(id, Incoming).take(1).count();
-
-        if n_parents == 0 {
-            no_parent_bricks.insert(id);
-        }
-
-        let children = g
-            .edges_directed(id, Outgoing)
-            .map(|(_, c, _)| c)
-            .collect::<Vec<_>>();
-        match &children[..] {
-            &[] => {}
-            &[c] => {
-                has_no_siblings.insert(c);
-            }
-            c => has_siblings.extend(c),
-        }
-    }
-
-    let n_always_siblings = has_siblings.difference(&has_no_siblings).count();
-
-    no_parent_bricks.len() + n_always_siblings
+    g
 }
 
 type Id = u16;
@@ -292,23 +349,7 @@ impl Volume {
     }
 
     fn all(&self) -> impl Iterator<Item = (Coord, Id)> + '_ {
-        let Self {
-            x_max,
-            y_max,
-            z_max,
-            ..
-        } = *self;
-
-        let xs = 0..=x_max;
-        let ys = 0..=y_max;
-        let zs = 0..=z_max;
-
-        let coords = xs
-            .cartesian_product(ys)
-            .cartesian_product(zs)
-            .map(|((x, y), z)| (x, y, z));
-
-        coords.flat_map(|c| Some((c, self.get(c)?)))
+        self.volume.iter().map(|(k, v)| (*k, *v))
     }
 
     fn below(&self, (x, y, z): Coord) -> Option<Id> {
@@ -368,5 +409,10 @@ mod test {
     #[test]
     fn example_1() {
         assert_eq!(5, safely_disintegratable_bricks(EXAMPLE_INPUT_1));
+    }
+
+    #[test]
+    fn example_2() {
+        assert_eq!(7, sum_of_falling_bricks(EXAMPLE_INPUT_1));
     }
 }
