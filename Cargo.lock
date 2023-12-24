@@ -228,6 +228,9 @@ dependencies = [
 [[package]]
 name = "day-23"
 version = "0.1.0"
+dependencies = [
+ "petgraph",
+]
 
 [[package]]
 name = "doc-comment"
